@@ -45,30 +45,34 @@ namespace sensors {
     const CMD_PWM_FREQ = 0x0D;
 
     //% fixedInstances
-    export class OctolinerSensor {
-        private _port: number;
+    export class OctolinerSensor extends internal.I2cSensor {
         private _initialized: boolean;
         private _sensitivity: number;
         private _lastPosition: number;
 
         constructor(port: number) {
-            this._port = port;
+            super(port);
             this._initialized = false;
             this._sensitivity = 208;
             this._lastPosition = 0;
         }
 
         /**
-         * Gets the internal I2C transport for the designated port
+         * Match the 16 null bytes reported by readI2cId() on EV3 for generic I2C devices
          */
-        private get transport(): internal.I2cSensor {
-            switch (this._port) {
-                case 1: return internal.i2cSensor1;
-                case 2: return internal.i2cSensor2;
-                case 3: return internal.i2cSensor3;
-                case 4: return internal.i2cSensor4;
-                default: return internal.i2cSensor1;
+        _i2cId(): string {
+            let id = "";
+            for (let i = 0; i < 16; i++) {
+                id += String.fromCharCode(0);
             }
+            return id;
+        }
+
+        /**
+         * Return active state so getBytes() always reads from this port
+         */
+        isActive(): boolean {
+            return true;
         }
 
         /**
@@ -78,13 +82,13 @@ namespace sensors {
             if (this._initialized) return;
 
             // 1. Set PWM frequency to 8000 Hz (0x1F40)
-            this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
             pause(10);
 
             // 2. Turn on IR LED illumination pin (Pin 9 to OUTPUT HIGH: 1 << 9 = 0x0200)
-            this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
             pause(10);
-            this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
             pause(10);
 
             // 3. Set sensitivity via PWM on Pin 0
@@ -106,7 +110,7 @@ namespace sensors {
         public setSensitivity(value: number) {
             this._sensitivity = Math.max(0, Math.min(255, value));
             // ANALOG_WRITE command (0x0B): [command, pin(0), high_byte, low_byte]
-            this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, this._sensitivity, 0], 0);
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, this._sensitivity, 0], 0);
             pause(10);
         }
 
@@ -125,10 +129,10 @@ namespace sensors {
             const pin = PIN_MAP[channel & 7];
 
             // Request ADC channel reading
-            this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
             pause(10); // Wait for transaction to complete in EV3 kernel timer interrupt
 
-            const buf = this.transport.getBytes();
+            const buf = this.getBytes();
             if (!buf || buf.length < 2) return 0;
 
             // Note: getI2cBytes reverses the buffer into Little-Endian,
@@ -240,7 +244,7 @@ namespace sensors {
          * Port number for this sensor instance (1, 2, 3, or 4).
          */
         public port(): number {
-            return this._port;
+            return this._port + 1;
         }
     }
 
