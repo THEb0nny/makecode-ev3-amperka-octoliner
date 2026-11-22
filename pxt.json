@@ -1,0 +1,23 @@
+{
+    "name": "makecode-ev3-amperka-octoliner",
+    "description": "Amperka Octoliner 8-channel line follower sensor",
+    "dependencies": {
+        "ev3": "*"
+    },
+    "files": [
+        "octoliner.ts",
+        "README.md"
+    ],
+    "testFiles": [
+        "test.ts"
+    ],
+    "targetVersions": {
+        "target": "1.7.0",
+        "targetId": "ev3"
+    },
+    "supportedTargets": [
+        "ev3"
+    ],
+    "preferredEditor": "tsprj",
+    "languageRestriction": "javascript-only"
+}
