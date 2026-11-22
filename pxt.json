@@ -1,6 +1,7 @@
 {
     "name": "makecode-ev3-amperka-octoliner",
-    "description": "Amperka Octoliner 8-channel line follower sensor",
+    "version": "0.1.0",
+    "description": "Amperka Octoliner 8-channel line follower sensor - beta",
     "dependencies": {
         "ev3": "*"
     },
@@ -19,5 +20,5 @@
         "ev3"
     ],
     "preferredEditor": "tsprj",
-    "languageRestriction": "javascript-only"
+    "public": true
 }
