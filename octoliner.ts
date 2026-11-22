@@ -34,7 +34,7 @@ enum OctolinerEvent {
 //% groups='["Line", "Channels", "Configuration"]'
 namespace sensors {
 
-    const OCTOLINER_I2C_ADDR = 0x54; // 8-bit LEGO EV3 write address (0x2A << 1)
+    const OCTOLINER_I2C_ADDR = 42; // 7-bit I2C address (0x2A)
     const PIN_MAP = [4, 5, 6, 8, 7, 3, 2, 1]; // ADC pin mapping for channels 0..7 on STM32 MCU
 
     // Amperka GpioExpander / Octoliner I2C commands (i2cioCommands.h)
@@ -55,6 +55,10 @@ namespace sensors {
             this._initialized = false;
             this._sensitivity = 208;
             this._lastPosition = 0;
+        }
+
+        _deviceType() {
+            return DAL.DEVICE_TYPE_NXT_IIC;
         }
 
         /**
@@ -83,16 +87,17 @@ namespace sensors {
 
             // 1. Set PWM frequency to 8000 Hz (0x1F40)
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
-            pause(10);
+            pause(20);
 
             // 2. Turn on IR LED illumination pin (Pin 9 to OUTPUT HIGH: 1 << 9 = 0x0200)
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
-            pause(10);
+            pause(20);
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
-            pause(10);
+            pause(20);
 
             // 3. Set sensitivity via PWM on Pin 0
             this.setSensitivity(this._sensitivity);
+            pause(20);
             this._initialized = true;
         }
 
@@ -111,7 +116,7 @@ namespace sensors {
             this._sensitivity = Math.max(0, Math.min(255, value));
             // ANALOG_WRITE command (0x0B): [command, pin(0), high_byte, low_byte]
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, this._sensitivity, 0], 0);
-            pause(10);
+            pause(20);
         }
 
         /**
@@ -130,7 +135,7 @@ namespace sensors {
 
             // Request ADC channel reading
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
-            pause(10); // Wait for transaction to complete in EV3 kernel timer interrupt
+            pause(15); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
             if (!buf || buf.length < 2) return 0;
