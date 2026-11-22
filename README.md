@@ -1,24 +1,19 @@
+## MakeCode for Mindstorms EV3 Extension
 
-> Открыть эту страницу в [https://theb0nny.github.io/makecode-ev3-amperka-octoliner/](https://theb0nny.github.io/makecode-ev3-amperka-octoliner/)
+## Use this extension
 
-## Использовать это расширение
+This repository can be added as an **extension** in MakeCode (BrickCode).
 
-Этот репозиторий может быть добавлен в MakeCode как **расширение**.
+* open [https://brickcode.org]([https://makecode.mindstorms.com/beta](https://brickcode.org))
+* click on **New Project**
+* click on **Extensions** under the gearwheel menu
+* search for **https://github.com/theb0nny/makecode-ev3-ht-color-sensor-v2** and import
 
-* открыть [/](/)
-* нажмите на **Новый проект**
-* нажмите **Расширения** в меню-шестерёнке
-* найдите **https://github.com/theb0nny/makecode-ev3-amperka-octoliner** и импортируйте
+## Blocks preview
 
-## Править этот проект
+This image shows the blocks code from the last commit in master.
+This image may take a few minutes to refresh.
 
-Редактировать этот репозиторий в MakeCode.
-
-* открыть [/](/)
-* нажмите на **Импорт**, затем **Импорт URL**
-* вставьте **https://github.com/theb0nny/makecode-ev3-amperka-octoliner** и нажмите Импорт
-
-#### Метаданные (используются для поиска, рендеринга)
+#### Metadata (used for search, rendering)
 
 * for PXT/ev3
-<script src="https://makecode.com/gh-pages-embed.js"></script><script>makeCodeRender("{{ site.makecode.home_url }}", "{{ site.github.owner_name }}/{{ site.github.repository_name }}");</script>
