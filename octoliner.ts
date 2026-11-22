@@ -79,13 +79,13 @@ namespace sensors {
 
             // 1. Set PWM frequency to 8000 Hz (0x1F40)
             this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
-            pause(5);
+            pause(10);
 
             // 2. Turn on IR LED illumination pin (Pin 9 to OUTPUT HIGH: 1 << 9 = 0x0200)
             this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
-            pause(5);
+            pause(10);
             this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
-            pause(5);
+            pause(10);
 
             // 3. Set sensitivity via PWM on Pin 0
             this.setSensitivity(this._sensitivity);
@@ -107,7 +107,7 @@ namespace sensors {
             this._sensitivity = Math.max(0, Math.min(255, value));
             // ANALOG_WRITE command (0x0B): [command, pin(0), high_byte, low_byte]
             this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, this._sensitivity, 0], 0);
-            pause(5);
+            pause(10);
         }
 
         /**
@@ -126,13 +126,14 @@ namespace sensors {
 
             // Request ADC channel reading
             this.transport.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
-            pause(4); // Wait for transaction to complete in EV3 kernel timer interrupt
+            pause(10); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.transport.getBytes();
             if (!buf || buf.length < 2) return 0;
 
-            // Return 16-bit big-endian value (12-bit ADC result)
-            return (buf[0] << 8) | buf[1];
+            // Note: getI2cBytes reverses the buffer into Little-Endian,
+            // so buf[0] is LSB and buf[1] is MSB
+            return (buf[1] << 8) | buf[0];
         }
 
         /**
