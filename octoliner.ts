@@ -49,12 +49,14 @@ namespace sensors {
         private _initialized: boolean;
         private _sensitivity: number;
         private _lastPosition: number;
+        private _address: number;
 
         constructor(port: number) {
             super(port);
             this._initialized = false;
             this._sensitivity = 208;
             this._lastPosition = 0;
+            this._address = OCTOLINER_I2C_ADDR;
             // Force hardware I2C mode activation:
             // Base I2cSensor constructor initializes realMode=0 and mode=0, so _setMode(0) is a no-op unless realMode is -1!
             this.realMode = -1;
@@ -101,24 +103,24 @@ namespace sensors {
             pause(200);
 
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
+            this.transaction(this._address, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
             pause(20);
 
             // 2. Turn on IR LED illumination pin (Pin 9)
             // Compatible with Octoliner v2 (OUTPUT HIGH) and v1 (PWM brightness):
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
+            this.transaction(this._address, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
             pause(20);
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
+            this.transaction(this._address, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
             pause(20);
             // In v1, IR LEDs are driven via PWM on pin 9 (65535 = full brightness)
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
+            this.transaction(this._address, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
             pause(20);
+
+            this._initialized = true;
 
             // 3. Set sensitivity via PWM on Pin 0 (0..65535)
             this.setSensitivity(this._sensitivity);
             pause(20);
-
-            this._initialized = true;
         }
 
         /**
@@ -133,11 +135,12 @@ namespace sensors {
         //% group="Configuration" weight=20
         //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
         public setSensitivity(value: number) {
+            this.ensureInit();
             this._sensitivity = Math.max(0, Math.min(255, value));
             // Map 0..255 to 16-bit 0..65535: (val << 8) | val
             const val16 = (this._sensitivity << 8) | this._sensitivity;
             // ANALOG_WRITE command (0x0B): [command, pin(0), msb, lsb]
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            this.transaction(this._address, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(20);
         }
 
@@ -153,10 +156,51 @@ namespace sensors {
         //% group="Configuration" weight=15
         //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
         public setBrightness(value: number) {
+            this.ensureInit();
             const b = Math.max(0, Math.min(255, value));
             const val16 = (b << 8) | b;
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 9, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            this.transaction(this._address, [CMD_ANALOG_WRITE, 9, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(20);
+        }
+
+        /**
+         * Sets custom 7-bit I2C address for the sensor (default is 42).
+         * @param address 7-bit I2C address (1 to 127)
+         */
+        //% blockId=octoliner_set_address
+        //% block="set %this I2C address to %address"
+        //% block.loc.ru="установить I2C адрес %this на %address"
+        //% address.min=1 address.max=127 address.defl=42
+        //% group="Configuration" weight=10
+        //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
+        public setAddress(address: number) {
+            this._address = address & 0x7F;
+            this._initialized = false;
+        }
+
+        /**
+         * Scans I2C addresses 1..127 on this port and returns the first responding address, or -1 if none found.
+         */
+        //% blockId=octoliner_scan_address
+        //% block="%this scan I2C address"
+        //% block.loc.ru="сканировать I2C адрес на %this"
+        //% group="Configuration" weight=5
+        //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
+        public scanAddress(): number {
+            this.realMode = -1;
+            this._setMode(0);
+            pause(200);
+            for (let addr = 1; addr < 128; addr++) {
+                this.transaction(addr, [CMD_ANALOG_READ, 4], 2);
+                pause(20);
+                const buf = this.getBytes();
+                if (buf && buf.length >= 2) {
+                    if (!(buf[0] === CMD_ANALOG_READ && buf[1] === 4)) {
+                        return addr;
+                    }
+                }
+            }
+            return -1;
         }
 
         /**
@@ -174,7 +218,7 @@ namespace sensors {
             const pin = PIN_MAP[channel & 7];
 
             // Request ADC channel reading
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
+            this.transaction(this._address, [CMD_ANALOG_READ, pin], 2);
             pause(20); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
