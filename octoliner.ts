@@ -55,10 +55,16 @@ namespace sensors {
             this._initialized = false;
             this._sensitivity = 208;
             this._lastPosition = 0;
+            // Activate I2C port connection mode in EV3 kernel driver
+            this.setMode(0);
         }
 
         _deviceType() {
             return DAL.DEVICE_TYPE_NXT_IIC;
+        }
+
+        _activated() {
+            this.setMode(this.mode);
         }
 
         /**
@@ -85,19 +91,28 @@ namespace sensors {
         private ensureInit() {
             if (this._initialized) return;
 
-            // 1. Set PWM frequency to 8000 Hz (0x1F40)
+            // Ensure EV3 kernel I2C port mode is active
+            this.setMode(0);
+            pause(30);
+
+            // 1. Set PWM frequency (8000 Hz: 0x1F40)
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
             pause(20);
 
-            // 2. Turn on IR LED illumination pin (Pin 9 to OUTPUT HIGH: 1 << 9 = 0x0200)
+            // 2. Turn on IR LED illumination pin (Pin 9)
+            // Compatible with Octoliner v2 (OUTPUT HIGH) and v1 (PWM brightness):
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
             pause(20);
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
             pause(20);
+            // In v1, IR LEDs are driven via PWM on pin 9 (65535 = full brightness)
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
+            pause(20);
 
-            // 3. Set sensitivity via PWM on Pin 0
+            // 3. Set sensitivity via PWM on Pin 0 (0..65535)
             this.setSensitivity(this._sensitivity);
             pause(20);
+
             this._initialized = true;
         }
 
@@ -114,8 +129,28 @@ namespace sensors {
         //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
         public setSensitivity(value: number) {
             this._sensitivity = Math.max(0, Math.min(255, value));
-            // ANALOG_WRITE command (0x0B): [command, pin(0), high_byte, low_byte]
-            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, this._sensitivity, 0], 0);
+            // Map 0..255 to 16-bit 0..65535: (val << 8) | val
+            const val16 = (this._sensitivity << 8) | this._sensitivity;
+            // ANALOG_WRITE command (0x0B): [command, pin(0), msb, lsb]
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            pause(20);
+        }
+
+        /**
+         * Sets IR LED illumination brightness (0 to 255). Default is 255.
+         * Particularly useful for Octoliner v1 which supports PWM brightness control.
+         * @param value brightness level from 0 to 255
+         */
+        //% blockId=octoliner_set_brightness
+        //% block="set %this brightness to %value"
+        //% block.loc.ru="установить яркость %this на %value"
+        //% value.min=0 value.max=255 value.defl=255
+        //% group="Configuration" weight=15
+        //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
+        public setBrightness(value: number) {
+            const b = Math.max(0, Math.min(255, value));
+            const val16 = (b << 8) | b;
+            this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_WRITE, 9, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(20);
         }
 
@@ -135,14 +170,18 @@ namespace sensors {
 
             // Request ADC channel reading
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_ANALOG_READ, pin], 2);
-            pause(15); // Wait for transaction to complete in EV3 kernel timer interrupt
+            pause(20); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
             if (!buf || buf.length < 2) return 0;
 
-            // Note: getI2cBytes reverses the buffer into Little-Endian,
-            // so buf[0] is LSB and buf[1] is MSB
-            return (buf[1] << 8) | buf[0];
+            // If the I2C transfer NACKed, EV3 driver echoes back the TX buffer ([CMD_ANALOG_READ, pin])
+            if (buf[0] === CMD_ANALOG_READ && buf[1] === pin) {
+                return 0;
+            }
+
+            // 16-bit ADC reading (MSB first, LSB second):
+            return (buf[0] << 8) | buf[1];
         }
 
         /**
