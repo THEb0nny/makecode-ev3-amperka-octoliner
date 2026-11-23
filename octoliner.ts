@@ -56,7 +56,7 @@ namespace sensors {
             this._sensitivity = 208;
             this._lastPosition = 0;
             // Activate I2C port connection mode in EV3 kernel driver
-            this.setMode(0);
+            this._setMode(0);
         }
 
         _deviceType() {
@@ -64,7 +64,7 @@ namespace sensors {
         }
 
         _activated() {
-            this.setMode(this.mode);
+            this._setMode(this.mode);
         }
 
         /**
@@ -92,7 +92,7 @@ namespace sensors {
             if (this._initialized) return;
 
             // Ensure EV3 kernel I2C port mode is active
-            this.setMode(0);
+            this._setMode(0);
             pause(30);
 
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
