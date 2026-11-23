@@ -173,11 +173,11 @@ namespace sensors {
             pause(20); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
-            if (!buf || buf.length < 2) return 0;
+            if (!buf || buf.length < 2) return -1;
 
             // If the I2C transfer NACKed, EV3 driver echoes back the TX buffer ([CMD_ANALOG_READ, pin])
             if (buf[0] === CMD_ANALOG_READ && buf[1] === pin) {
-                return 0;
+                return -1;
             }
 
             // 16-bit ADC reading (MSB first, LSB second):
