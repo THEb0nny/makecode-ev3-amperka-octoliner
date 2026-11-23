@@ -50,6 +50,7 @@ namespace sensors {
         private _sensitivity: number;
         private _lastPosition: number;
         private _address: number;
+        private _failCount: number;
 
         constructor(port: number) {
             super(port);
@@ -57,6 +58,7 @@ namespace sensors {
             this._sensitivity = 208;
             this._lastPosition = 0;
             this._address = OCTOLINER_I2C_ADDR;
+            this._failCount = 0;
             // Force hardware I2C mode activation:
             // Base I2cSensor constructor initializes realMode=0 and mode=0, so _setMode(0) is a no-op unless realMode is -1!
             this.realMode = -1;
@@ -91,36 +93,66 @@ namespace sensors {
         }
 
         /**
+         * Wakes up the EV3 kernel I2C driver (d_iic.c).
+         * Waits for kernel sensor autodetection to complete, then toggles port mode
+         * to transition the driver out of IIC_SETUP_WAIT into IIC_WAITING.
+         */
+        private wakeDriver() {
+            // Wait until EV3 kernel autodetection completes (~1000ms after boot)
+            const uptime = control.millis();
+            if (uptime < 1200) {
+                pause(1200 - uptime);
+            }
+
+            // In d_iic.c, Device1Ioctl only transitions out of IIC_SETUP_WAIT when
+            // IicPort[Port].Initialised == 1 AND Mode != (*pDevCon).Mode[Port].
+            // Because Mode defaults to 0, setting mode 0 is a no-op unless we toggle to 1 and back.
+            this.realMode = -1;
+            this._setMode(1);
+            pause(50);
+            this.realMode = -1;
+            this._setMode(0);
+            pause(100);
+        }
+
+        /**
          * Initializes the sensor (enables IR illumination and configures PWM frequency)
          */
         private ensureInit() {
             if (this._initialized) return;
 
-            // Force EV3 kernel I2C port mode activation
-            this.realMode = -1;
-            this._setMode(0);
+            this.wakeDriver();
             control.dmesg(`Octoliner ensureInit on port ${this.port()}`);
-            pause(200);
 
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
             this.transaction(this._address, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
-            pause(20);
+            pause(30);
 
             // 2. Turn on IR LED illumination pin (Pin 9)
             // Compatible with Octoliner v2 (OUTPUT HIGH) and v1 (PWM brightness):
             this.transaction(this._address, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
-            pause(20);
+            pause(30);
             this.transaction(this._address, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
-            pause(20);
+            pause(30);
             // In v1, IR LEDs are driven via PWM on pin 9 (65535 = full brightness)
             this.transaction(this._address, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
-            pause(20);
-
-            this._initialized = true;
+            pause(30);
 
             // 3. Set sensitivity via PWM on Pin 0 (0..65535)
-            this.setSensitivity(this._sensitivity);
-            pause(20);
+            const val16 = (this._sensitivity << 8) | this._sensitivity;
+            this.transaction(this._address, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            pause(30);
+
+            // 4. Test read on channel 0 (PIN_MAP[0] = 4) to verify ACK
+            this.transaction(this._address, [CMD_ANALOG_READ, 4], 2);
+            pause(25);
+            const buf = this.getBytes();
+            if (buf && buf.length >= 2 && !(buf[0] === CMD_ANALOG_READ && buf[1] === 4)) {
+                this._initialized = true;
+                control.dmesg(`Octoliner init success on port ${this.port()}`);
+            } else {
+                control.dmesg(`Octoliner init ACK failed on port ${this.port()}`);
+            }
         }
 
         /**
@@ -187,15 +219,15 @@ namespace sensors {
         //% group="Configuration" weight=5
         //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
         public scanAddress(): number {
-            this.realMode = -1;
-            this._setMode(0);
-            pause(200);
+            this.wakeDriver();
+            control.dmesg(`Octoliner scanning I2C addresses on port ${this.port()}`);
             for (let addr = 1; addr < 128; addr++) {
                 this.transaction(addr, [CMD_ANALOG_READ, 4], 2);
-                pause(20);
+                pause(25);
                 const buf = this.getBytes();
                 if (buf && buf.length >= 2) {
                     if (!(buf[0] === CMD_ANALOG_READ && buf[1] === 4)) {
+                        control.dmesg(`Octoliner found responding address: ${addr}`);
                         return addr;
                     }
                 }
@@ -219,16 +251,22 @@ namespace sensors {
 
             // Request ADC channel reading
             this.transaction(this._address, [CMD_ANALOG_READ, pin], 2);
-            pause(20); // Wait for transaction to complete in EV3 kernel timer interrupt
+            pause(25); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
             if (!buf || buf.length < 2) return -1;
 
             // If the I2C transfer NACKed, EV3 driver echoes back the TX buffer ([CMD_ANALOG_READ, pin])
             if (buf[0] === CMD_ANALOG_READ && buf[1] === pin) {
+                this._failCount++;
+                if (this._failCount > 10) {
+                    this._initialized = false;
+                    this._failCount = 0;
+                }
                 return -1;
             }
 
+            this._failCount = 0;
             // 16-bit ADC reading (MSB first, LSB second):
             return (buf[0] << 8) | buf[1];
         }
