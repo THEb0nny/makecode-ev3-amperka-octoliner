@@ -55,15 +55,18 @@ namespace sensors {
             this._initialized = false;
             this._sensitivity = 208;
             this._lastPosition = 0;
-            // Activate I2C port connection mode in EV3 kernel driver
+            // Force hardware I2C mode activation:
+            // Base I2cSensor constructor initializes realMode=0 and mode=0, so _setMode(0) is a no-op unless realMode is -1!
+            this.realMode = -1;
             this._setMode(0);
         }
 
         _deviceType() {
-            return DAL.DEVICE_TYPE_NXT_IIC;
+            return DAL.DEVICE_TYPE_IIC_UNKNOWN;
         }
 
         _activated() {
+            this.realMode = -1;
             this._setMode(this.mode);
         }
 
@@ -91,9 +94,11 @@ namespace sensors {
         private ensureInit() {
             if (this._initialized) return;
 
-            // Ensure EV3 kernel I2C port mode is active
+            // Force EV3 kernel I2C port mode activation
+            this.realMode = -1;
             this._setMode(0);
-            pause(30);
+            control.dmesg(`Octoliner ensureInit on port ${this.port()}`);
+            pause(200);
 
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
             this.transaction(OCTOLINER_I2C_ADDR, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
