@@ -61,7 +61,7 @@ namespace sensors {
             this._sensitivity = 208;
             this._lastPosition = 0;
             this._address = OCTOLINER_I2C_ADDR;
-            this._wireAddress = OCTOLINER_I2C_ADDR << 1; // 84 (0x54) on wire
+            this._wireAddress = OCTOLINER_I2C_ADDR; // 42 (7-bit I2C address)
             this._failCount = 0;
             this._lastWakeTime = 0;
             this._initAttemptTime = 0;
@@ -128,6 +128,21 @@ namespace sensors {
         }
 
         /**
+         * Reliably sends an I2C transaction to d_iic.c.
+         * The EV3 d_iic kernel driver sets IIC_DATA_READY upon transfer completion,
+         * but keeps IIC_WRITE_REQUEST set until an ioctl(IIC_SETUP) call clears it.
+         * If a new transaction is sent while DATA_READY is pending, the first ioctl
+         * call only clears the status and DROPS the new transaction!
+         * Calling it twice guarantees that:
+         * 1) any pending status is cleared (call 1),
+         * 2) the new transaction is loaded and started (call 2).
+         */
+        private sendTransaction(addr: number, writeBuf: number[], readLen: number) {
+            this.transaction(addr, writeBuf, readLen);
+            this.transaction(addr, writeBuf, readLen);
+        }
+
+        /**
          * Checks if the received buffer represents a NACK or invalid response.
          */
         private isNack(buf: Buffer, pin: number): boolean {
@@ -146,7 +161,7 @@ namespace sensors {
          * Probes a specific wire address with a test read. Returns true if device ACKs.
          */
         private probeWireAddress(addr: number): boolean {
-            this.transaction(addr, [CMD_ANALOG_READ, 4], 2);
+            this.sendTransaction(addr, [CMD_ANALOG_READ, 4], 2);
             pause(30);
             const buf = this.getBytes();
             return !this.isNack(buf, 4);
@@ -158,22 +173,22 @@ namespace sensors {
          */
         private initHardware() {
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
-            this.transaction(this._wireAddress, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
+            this.sendTransaction(this._wireAddress, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
             pause(25);
 
             // 2. Turn on IR LED illumination pin (Pin 9)
             // Compatible with Octoliner v2 (OUTPUT HIGH) and v1 (PWM brightness):
-            this.transaction(this._wireAddress, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
+            this.sendTransaction(this._wireAddress, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
             pause(25);
-            this.transaction(this._wireAddress, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
+            this.sendTransaction(this._wireAddress, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
             pause(25);
             // In v1, IR LEDs are driven via PWM on pin 9 (65535 = full brightness)
-            this.transaction(this._wireAddress, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
+            this.sendTransaction(this._wireAddress, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
             pause(25);
 
             // 3. Set sensitivity via PWM on Pin 0 (0..65535)
             const val16 = (this._sensitivity << 8) | this._sensitivity;
-            this.transaction(this._wireAddress, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            this.sendTransaction(this._wireAddress, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(25);
 
             // 4. Verify communication with a test read
@@ -200,9 +215,9 @@ namespace sensors {
             this.wakeDriver();
             control.dmesg(`Octoliner ensureInit on port ${this.port()}`);
 
-            // Try candidate wire addresses:
-            // 84 (42 shifted), 42 (raw 42), 132 (0x42 shifted), 66 (raw 0x42)
-            const candidates = [this._address << 1, this._address, 132, 66];
+            // Try candidate wire addresses in order of likelihood:
+            // 42 (raw 7-bit), 66 (raw 0x42), 84 (42 shifted), 132 (0x42 shifted)
+            const candidates = [42, 66, 84, 132];
             let found = false;
             for (let i = 0; i < candidates.length; i++) {
                 if (this.probeWireAddress(candidates[i])) {
@@ -234,7 +249,7 @@ namespace sensors {
             // Map 0..255 to 16-bit 0..65535: (val << 8) | val
             const val16 = (this._sensitivity << 8) | this._sensitivity;
             // ANALOG_WRITE command (0x0B): [command, pin(0), msb, lsb]
-            this.transaction(this._wireAddress, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            this.sendTransaction(this._wireAddress, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(20);
         }
 
@@ -253,7 +268,7 @@ namespace sensors {
             this.ensureInit();
             const b = Math.max(0, Math.min(255, value));
             const val16 = (b << 8) | b;
-            this.transaction(this._wireAddress, [CMD_ANALOG_WRITE, 9, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            this.sendTransaction(this._wireAddress, [CMD_ANALOG_WRITE, 9, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
             pause(20);
         }
 
@@ -269,7 +284,7 @@ namespace sensors {
         //% this.fieldEditor="images" this.fieldOptions.columns="4" this.fieldOptions.width="300"
         public setAddress(address: number) {
             this._address = address & 0x7F;
-            this._wireAddress = this._address < 64 ? (this._address << 1) : this._address;
+            this._wireAddress = this._address;
             this._initialized = false;
         }
 
@@ -286,8 +301,8 @@ namespace sensors {
             control.dmesg(`Octoliner scanning I2C addresses on port ${this.port()}`);
 
             // Test most likely addresses first:
-            // 84 (42 shifted), 42 (raw 42), 132 (0x42 shifted), 66 (raw 0x42)
-            const quickAddrs = [84, 42, 132, 66];
+            // 42 (raw 7-bit default), 66 (raw 0x42), 84 (42 shifted), 132 (0x42 shifted)
+            const quickAddrs = [42, 66, 84, 132];
             for (let i = 0; i < quickAddrs.length; i++) {
                 const wire = quickAddrs[i];
                 if (this.probeWireAddress(wire)) {
@@ -300,19 +315,19 @@ namespace sensors {
 
             // Scan all 7-bit addresses (1..127)
             for (let addr = 1; addr < 128; addr++) {
+                // Try raw 7-bit unshifted address first
+                if (this.probeWireAddress(addr)) {
+                    control.dmesg(`Octoliner found responding raw address: ${addr}`);
+                    this._address = addr;
+                    this._wireAddress = addr;
+                    this.initHardware();
+                    return addr;
+                }
                 // Try 8-bit shifted address
                 if (this.probeWireAddress(addr << 1)) {
                     control.dmesg(`Octoliner found responding 7-bit address: ${addr} (wire ${addr << 1})`);
                     this._address = addr;
                     this._wireAddress = addr << 1;
-                    this.initHardware();
-                    return addr;
-                }
-                // Try raw unshifted address
-                if (this.probeWireAddress(addr)) {
-                    control.dmesg(`Octoliner found responding raw address: ${addr}`);
-                    this._address = addr;
-                    this._wireAddress = addr;
                     this.initHardware();
                     return addr;
                 }
@@ -346,7 +361,7 @@ namespace sensors {
             const pin = PIN_MAP[channel & 7];
 
             // Request ADC channel reading
-            this.transaction(this._wireAddress, [CMD_ANALOG_READ, pin], 2);
+            this.sendTransaction(this._wireAddress, [CMD_ANALOG_READ, pin], 2);
             pause(25); // Wait for transaction to complete in EV3 kernel timer interrupt
 
             const buf = this.getBytes();
