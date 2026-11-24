@@ -132,10 +132,12 @@ namespace sensors {
          */
         private isNack(buf: Buffer, pin: number): boolean {
             if (!buf || buf.length < 2) return true;
+            // Disconnected or idle driver (all 0x00):
+            if (buf[0] === 0 && buf[1] === 0) return true;
             // Echoed TX buffer (forward [CMD, pin] or reversed by getI2cBytes [pin, CMD]):
             if (buf[0] === CMD_ANALOG_READ && buf[1] === pin) return true;
             if (buf[1] === CMD_ANALOG_READ && buf[0] === pin) return true;
-            // Floating bus or timeout (all 0xFF or all 0x00):
+            // Floating bus or timeout (all 0xFF):
             if (buf[0] === 0xFF && buf[1] === 0xFF) return true;
             return false;
         }
@@ -151,30 +153,10 @@ namespace sensors {
         }
 
         /**
-         * Initializes the sensor (enables IR illumination and configures PWM frequency)
+         * Initializes sensor hardware: configures PWM frequency, enables IR illumination,
+         * sets sensitivity, and verifies ACK communication.
          */
-        private ensureInit() {
-            if (this._initialized) return;
-
-            const now = control.millis();
-            if (this._initAttemptTime !== 0 && (now - this._initAttemptTime) < 1500) {
-                return;
-            }
-            this._initAttemptTime = now;
-
-            this.wakeDriver();
-            control.dmesg(`Octoliner ensureInit on port ${this.port()}`);
-
-            // Detect whether sensor responds to 8-bit shifted address (42 << 1 = 84)
-            // or unshifted 7-bit address (42):
-            let targetWire = this._wireAddress;
-            if (this.probeWireAddress(this._address << 1)) {
-                targetWire = this._address << 1;
-            } else if (this.probeWireAddress(this._address)) {
-                targetWire = this._address;
-            }
-            this._wireAddress = targetWire;
-
+        private initHardware() {
             // 1. Set PWM frequency (8000 Hz: 0x1F40)
             this.transaction(this._wireAddress, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
             pause(25);
@@ -200,6 +182,38 @@ namespace sensors {
                 control.dmesg(`Octoliner init success on port ${this.port()} at wire addr ${this._wireAddress}`);
             } else {
                 control.dmesg(`Octoliner init ACK failed on port ${this.port()}`);
+            }
+        }
+
+        /**
+         * Initializes the sensor if not already initialized.
+         */
+        private ensureInit() {
+            if (this._initialized) return;
+
+            const now = control.millis();
+            if (this._initAttemptTime !== 0 && (now - this._initAttemptTime) < 1500) {
+                return;
+            }
+            this._initAttemptTime = now;
+
+            this.wakeDriver();
+            control.dmesg(`Octoliner ensureInit on port ${this.port()}`);
+
+            // Try candidate wire addresses:
+            // 84 (42 shifted), 42 (raw 42), 132 (0x42 shifted), 66 (raw 0x42)
+            const candidates = [this._address << 1, this._address, 132, 66];
+            let found = false;
+            for (let i = 0; i < candidates.length; i++) {
+                if (this.probeWireAddress(candidates[i])) {
+                    this._wireAddress = candidates[i];
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found) {
+                this.initHardware();
             }
         }
 
@@ -271,22 +285,35 @@ namespace sensors {
             this.wakeDriver();
             control.dmesg(`Octoliner scanning I2C addresses on port ${this.port()}`);
 
-            // Test default address first
-            if (this.probeWireAddress(OCTOLINER_I2C_ADDR << 1)) return OCTOLINER_I2C_ADDR;
-            if (this.probeWireAddress(OCTOLINER_I2C_ADDR)) return OCTOLINER_I2C_ADDR;
+            // Test most likely addresses first:
+            // 84 (42 shifted), 42 (raw 42), 132 (0x42 shifted), 66 (raw 0x42)
+            const quickAddrs = [84, 42, 132, 66];
+            for (let i = 0; i < quickAddrs.length; i++) {
+                const wire = quickAddrs[i];
+                if (this.probeWireAddress(wire)) {
+                    this._wireAddress = wire;
+                    this._address = wire > 127 ? (wire >> 1) : wire;
+                    this.initHardware();
+                    return this._address;
+                }
+            }
 
             // Scan all 7-bit addresses (1..127)
             for (let addr = 1; addr < 128; addr++) {
+                // Try 8-bit shifted address
                 if (this.probeWireAddress(addr << 1)) {
                     control.dmesg(`Octoliner found responding 7-bit address: ${addr} (wire ${addr << 1})`);
                     this._address = addr;
                     this._wireAddress = addr << 1;
+                    this.initHardware();
                     return addr;
                 }
+                // Try raw unshifted address
                 if (this.probeWireAddress(addr)) {
                     control.dmesg(`Octoliner found responding raw address: ${addr}`);
                     this._address = addr;
                     this._wireAddress = addr;
+                    this.initHardware();
                     return addr;
                 }
             }
@@ -294,13 +321,14 @@ namespace sensors {
         }
 
         /**
-         * Returns diagnostic string showing wire address and last received raw buffer.
+         * Returns diagnostic string showing wire address, init status, and last received raw buffer.
          */
         public debugInfo(): string {
             const buf = this.getBytes();
             const b0 = buf && buf.length > 0 ? buf[0] : -1;
             const b1 = buf && buf.length > 1 ? buf[1] : -1;
-            return `W:${this._wireAddress} [${b0},${b1}]`;
+            const status = this._initialized ? "OK" : "NO";
+            return `W:${this._wireAddress} ${status} [${b0},${b1}]`;
         }
 
         /**
