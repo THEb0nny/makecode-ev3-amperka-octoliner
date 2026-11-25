@@ -1,41 +1,33 @@
-// === OCTOLINER PORT 4 DIAGNOSTIC TEST ===
-// Probes addresses on Port 4 and shows raw bytes on screen.
+// === OCTOLINER PORT 4 SYNC I2C DIAGNOSTIC (v0.1.9) ===
+// Uses synchronous Repeat=1 transactions via /dev/lms_iic and provides
+// an electrical SCL=0V test to measure V_OL with a multimeter.
 
-const sensor = sensors.octoliner4; // TARGET: Port 4!
+const sensor = sensors.octoliner4; // TARGET: Port 4
 
-// Wait for EV3 boot autodetect to settle
 pause(2000);
 
 brick.showString("OCTOLINER PORT 4", 1);
-brick.showString("Step 1: Test LED 84", 2);
-pause(1000);
-
-// Try turning on LED at wire address 84 (42 shifted)
+brick.showString("Test LED 84 & 42...", 2);
 sensor.testLed(84);
+sensor.testLed(42);
 pause(500);
 
-// Priority addresses to test with raw probe:
-// 84 = 42 << 1 (standard 7-bit 42 as 8-bit wire address)
-// 42 = raw 7-bit 42 (unshifted)
-// 132 = 66 << 1 (0x42 shifted)
-// 66 = raw 0x42
-// 85 = 84 | 1 (read address)
-// 2 = NXT Ultrasonic standard wire address
-const priority = [84, 42, 132, 66, 85, 2, 4, 8, 16, 32, 64, 128];
+// Priority addresses:
+// 84 = 42 << 1 (standard 8-bit write address for Octoliner)
+// 42 = 0x2A raw
+// 132 = 0x42 << 1
+// 66 = 0x42 raw
+const priority = [84, 42, 132, 66, 85, 2, 16, 32, 64, 128];
 
-brick.showString("Step 2: Priority Addrs", 2);
-pause(1000);
-
+brick.showString("Priority Scan (R=1):", 2);
 let found = -1;
 let line = 3;
 
 for (let i = 0; i < priority.length; i++) {
     const addr = priority[i];
-    // Send [12, 4] = CMD_ANALOG_READ pin 4
-    // If NACK: EV3 driver returns [12, 4] (echo) or [0, 0] if port idle
-    // If ACK: EV3 driver returns actual ADC reading (NOT [12, 4])
     const res = sensor.rawProbe(addr, 12, 4);
-    brick.showString(`A:${addr} [${res}]`, line);
+    const ioctlRes = sensor.lastIoctlResult();
+    brick.showString(`A:${addr} r:${ioctlRes} [${res}]`, line);
     line++;
     if (line > 10) {
         pause(2000);
@@ -52,26 +44,22 @@ for (let i = 0; i < priority.length; i++) {
 
     if (!isEcho && !isZero && !isFF && !isInvalid) {
         found = addr;
-        brick.showString(`FOUND: ${addr}!`, 2);
+        brick.showString(`FOUND A:${addr}!`, 2);
         sensor.testLed(addr);
         pause(3000);
         break;
     }
-    pause(100);
+    pause(50);
 }
 
 if (found < 0) {
-    brick.showString("Step 3: Deep Scan 1-127", 2);
-    pause(1000);
+    brick.showString("Deep Scan 1..127:", 2);
     line = 3;
     for (let a = 1; a < 128; a++) {
-        const wire = a << 1; // standard I2C wire address
+        const wire = a << 1;
         const res = sensor.rawProbe(wire, 12, 4);
-        brick.showString(`W:${wire} [${res}]`, line);
-        line++;
-        if (line > 10) {
-            pause(1500);
-            line = 3;
+        if (a % 16 === 0) {
+            brick.showString(`Scanning ${wire}... [${res}]`, 3);
         }
 
         const parts = res.split(",");
@@ -84,28 +72,46 @@ if (found < 0) {
 
         if (!isEcho && !isZero && !isFF && !isInvalid) {
             found = wire;
-            brick.showString(`FOUND W:${wire}!`, 2);
+            brick.showString(`FOUND W:${wire} [${res}]`, 2);
             sensor.testLed(wire);
             pause(3000);
             break;
         }
-        pause(50);
     }
 }
 
 if (found >= 0) {
     brick.showString(`SUCCESS Addr=${found}`, 2);
-    // Continuous reading loop to verify data
     while (true) {
         const res = sensor.rawProbe(found, 12, 4);
-        brick.showString(`ADC: [${res}]`, 3);
-        pause(300);
+        brick.showString(`ADC ch0: [${res}]`, 3);
+        pause(200);
     }
 } else {
     brick.showString("NO ACK ON ANY ADDR", 2);
-    brick.showString("Check LED on board", 3);
-}
+    brick.showString(`Last: ${sensor.debugInfo()}`, 3);
+    brick.showString("Press DOWN = SCL LOW", 5);
+    brick.showString("Press UP   = SCL FLOAT", 6);
+    brick.showString("Measure G-SCL voltage!", 7);
 
-while (true) {
-    pause(5000);
+    let sclLow = false;
+    while (true) {
+        if (brick.buttonDown.isPressed()) {
+            sclLow = true;
+            sensor.driveSclLow(true);
+            brick.showString("STATE: SCL = 0V (LOW) ", 9);
+            pause(300);
+        }
+        if (brick.buttonUp.isPressed()) {
+            sclLow = false;
+            sensor.driveSclLow(false);
+            brick.showString("STATE: SCL = FLOAT    ", 9);
+            pause(300);
+        }
+        if (sclLow) {
+            // Refresh pin low periodically in case d_iic touches it
+            sensor.driveSclLow(true);
+        }
+        pause(100);
+    }
 }
