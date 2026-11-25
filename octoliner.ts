@@ -347,21 +347,47 @@ namespace sensors {
         }
 
         /**
-         * Raw I2C probe: sends a single-byte command to the given wire address and
+         * Raw I2C probe: sends command bytes to the given wire address and
          * returns the two received bytes as a string "b0,b1" WITHOUT any NACK filtering.
-         * Use for diagnosis to see exactly what the driver returns for each address.
+         * Calls wakeDriver() first to ensure EV3 I2C driver is in IIC_WAITING.
          * @param wireAddr wire address (0–255) to probe
-         * @param cmd command byte to send (default 0x00)
+         * @param cmd0 first command byte to send (default CMD_ANALOG_READ = 0x0C)
+         * @param cmd1 second command byte to send (default pin 4)
          */
-        public rawProbe(wireAddr: number, cmd: number = 0): string {
-            this.transaction(wireAddr, [cmd], 2);
-            pause(80);
-            this.transaction(wireAddr, [cmd], 2);
-            pause(80);
+        public rawProbe(wireAddr: number, cmd0: number = 0x0C, cmd1: number = 4): string {
+            this.wakeDriver();
+            this.sendTransaction(wireAddr, [cmd0, cmd1], 2);
+            pause(60);
             const buf = this.getBytes();
             const b0 = buf && buf.length > 0 ? buf[0] : -1;
             const b1 = buf && buf.length > 1 ? buf[1] : -1;
             return `${b0},${b1}`;
+        }
+
+        /**
+         * Direct hardware initialization attempt for a given wire address.
+         * Tries to turn on the IR illumination LED (Pin 9) and configure PWM.
+         * If the device ACKs, the red LED on the board physically lights up!
+         * @param wireAddr wire address (default is current _wireAddress)
+         */
+        public testLed(wireAddr: number = -1) {
+            const addr = wireAddr < 0 ? this._wireAddress : wireAddr;
+            this.wakeDriver();
+            // 1. PWM frequency 8000 Hz: [CMD_PWM_FREQ, 0x1F, 0x40]
+            this.sendTransaction(addr, [CMD_PWM_FREQ, 0x1F, 0x40], 0);
+            pause(20);
+            // 2. Set Pin 9 OUTPUT HIGH:
+            this.sendTransaction(addr, [CMD_PORT_MODE_OUTPUT, 0x02, 0x00], 0);
+            pause(20);
+            this.sendTransaction(addr, [CMD_DIGITAL_WRITE_HIGH, 0x02, 0x00], 0);
+            pause(20);
+            // 3. Set Pin 9 PWM full brightness (65535):
+            this.sendTransaction(addr, [CMD_ANALOG_WRITE, 9, 0xFF, 0xFF], 0);
+            pause(20);
+            // 4. Set sensitivity (Pin 0):
+            const val16 = (this._sensitivity << 8) | this._sensitivity;
+            this.sendTransaction(addr, [CMD_ANALOG_WRITE, 0, (val16 >> 8) & 0xFF, val16 & 0xFF], 0);
+            pause(20);
         }
 
         /**
