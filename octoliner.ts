@@ -347,6 +347,24 @@ namespace sensors {
         }
 
         /**
+         * Raw I2C probe: sends a single-byte command to the given wire address and
+         * returns the two received bytes as a string "b0,b1" WITHOUT any NACK filtering.
+         * Use for diagnosis to see exactly what the driver returns for each address.
+         * @param wireAddr wire address (0–255) to probe
+         * @param cmd command byte to send (default 0x00)
+         */
+        public rawProbe(wireAddr: number, cmd: number = 0): string {
+            this.transaction(wireAddr, [cmd], 2);
+            pause(80);
+            this.transaction(wireAddr, [cmd], 2);
+            pause(80);
+            const buf = this.getBytes();
+            const b0 = buf && buf.length > 0 ? buf[0] : -1;
+            const b1 = buf && buf.length > 1 ? buf[1] : -1;
+            return `${b0},${b1}`;
+        }
+
+        /**
          * Reads the raw analog value from a single channel (0 to 4095).
          * Darker surfaces reflect less IR light and produce higher values.
          * @param channel channel index from 0 to 7
